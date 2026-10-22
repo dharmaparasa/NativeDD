@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --safe-b: env(safe-area-inset-bottom, 0px); --safe-t: env(safe-area-inset-top, 0px); }
+html, body, #root { height: 100%; }
+body {
+  margin: 0; background: #FFFBF3; color: #2B2A33;
+  font-family: 'Nunito Variable', ui-rounded, system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid #4AA8E8; outline-offset: 2px; border-radius: 10px; }
+.no-select { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.hide-scroll::-webkit-scrollbar { width: 0; height: 0 }
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 font-bold transition active:scale-95 disabled:opacity-40 disabled:active:scale-100; }
+  .btn-primary { @apply btn bg-sun text-ink shadow-card hover:bg-sun-deep; }
+  .btn-soft { @apply btn bg-white border border-line text-ink hover:bg-[#FFF6E5]; }
+  .btn-ghost { @apply btn text-ink-soft hover:bg-[#FFF1D6]; }
+  .icon-btn { @apply inline-flex h-10 w-10 items-center justify-center rounded-full text-ink-soft transition hover:bg-[#FFF1D6] active:scale-90 disabled:opacity-30; }
+  .field { @apply w-full rounded-2xl border border-line bg-white px-3.5 py-2.5 text-base outline-none transition focus:border-[#4AA8E8] focus:ring-4 focus:ring-[#4AA8E8]/15; }
+  .panel { @apply rounded-3xl border border-line bg-white p-4 shadow-card; }
+}
+
+@keyframes slide-l { from { opacity: 0; transform: translateX(28px) } to { opacity: 1; transform: none } }
+@keyframes slide-r { from { opacity: 0; transform: translateX(-28px) } to { opacity: 1; transform: none } }
+@keyframes pop { from { opacity: 0; transform: translateY(14px) scale(.98) } to { opacity: 1; transform: none } }
+@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sheet { from { transform: translateY(40px); opacity: .6 } to { transform: none; opacity: 1 } }
+.anim-slide-l { animation: slide-l .28s ease-out }
+.anim-slide-r { animation: slide-r .28s ease-out }
+.anim-pop { animation: pop .22s ease-out }
+.anim-fade { animation: fade .18s ease-out }
+.anim-sheet { animation: sheet .24s cubic-bezier(.2,.8,.2,1) }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}
