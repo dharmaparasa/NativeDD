@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, emptyData, uid } from './types'
 import { History, applyTxn } from './undo'
 import * as persist from './db'
 import { setTimeFormat } from './time'
+import { syncNativeNotifications } from './nativeNotifications'
 
 export interface Toast { id: number; message: string; action: 'undo' | 'redo' | null }
 export interface State { ready: boolean; data: Data; settings: Settings; canUndo: boolean; canRedo: boolean; toast: Toast | null }
@@ -28,6 +29,7 @@ class Store {
       const { data, settings, fired } = await persist.loadAll()
       this.fired = fired; setTimeFormat(settings.timeFormat)
       this.set({ data, settings, ready: true })
+      this.syncNotifications(data, settings)
     } catch (e) {
       console.error('Could not open local storage', e)
       this.persistent = false
@@ -43,18 +45,21 @@ class Store {
     this.history.push(txn)
     this.save(data, touched)
     this.set({ data, toast: toast ? { id: ++this.toastId, message: toast, action: 'undo' } : this.s.toast })
+    if (touched.some(({ table }) => table === 'activities')) this.syncNotifications(data, this.s.settings)
   }
   undo() {
     const t = this.history.popUndo(); if (!t) return
     const { data, touched } = applyTxn(this.s.data, t.ops, 'undo')
     this.save(data, touched)
     this.set({ data, toast: { id: ++this.toastId, message: `Undid: ${t.label}`, action: 'redo' } })
+    if (touched.some(({ table }) => table === 'activities')) this.syncNotifications(data, this.s.settings)
   }
   redo() {
     const t = this.history.popRedo(); if (!t) return
     const { data, touched } = applyTxn(this.s.data, t.ops, 'do')
     this.save(data, touched)
     this.set({ data, toast: { id: ++this.toastId, message: `Redid: ${t.label}`, action: 'undo' } })
+    if (touched.some(({ table }) => table === 'activities')) this.syncNotifications(data, this.s.settings)
   }
   private save(data: Data, touched: { table: Op['table']; id: string }[]) {
     if (!this.persistent) return
@@ -65,9 +70,15 @@ class Store {
 
   updateSettings(patch: Partial<Settings>) {
     const settings = { ...this.s.settings, ...patch }
+    const notificationSettingsChanged =
+      settings.systemNotifications !== this.s.settings.systemNotifications ||
+      settings.hourly.on !== this.s.settings.hourly.on ||
+      settings.start.on !== this.s.settings.start.on ||
+      settings.end.on !== this.s.settings.end.on
     setTimeFormat(settings.timeFormat)
     if (this.persistent) void persist.saveSettings(settings)
     this.set({ settings })
+    if (notificationSettingsChanged) this.syncNotifications(this.s.data, settings)
   }
   markFired(keys: string[]) { keys.forEach((k) => this.fired.add(k)); if (this.persistent) void persist.saveFired(keys) }
 
@@ -75,11 +86,20 @@ class Store {
     if (this.persistent) await persist.replaceAll(data, settings)
     this.history.clear(); this.fired.clear(); setTimeFormat(settings.timeFormat)
     this.set({ data, settings })
+    this.syncNotifications(data, settings)
   }
   async clearAll() {
     if (this.persistent) await persist.wipeAll()
     this.history.clear(); this.fired.clear(); setTimeFormat(DEFAULT_SETTINGS.timeFormat)
     this.set({ data: emptyData(), settings: DEFAULT_SETTINGS })
+    this.syncNotifications(this.s.data, this.s.settings)
+  }
+
+  private syncNotifications(data: Data, settings: Settings) {
+    void syncNativeNotifications(data, settings).catch((error: unknown) => {
+      console.error('Could not update scheduled notifications', error)
+      this.showToast('Couldn’t update scheduled notifications.')
+    })
   }
 }
 export const store = new Store()

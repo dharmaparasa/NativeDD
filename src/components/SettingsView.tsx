@@ -7,6 +7,7 @@ import type { EventKind } from '../lib/notify'
 import { makeBackup, parseBackup, type Backup } from '../lib/backup'
 import { useCanInstall } from '../hooks'
 import { promptInstall } from '../pwa'
+import { isAndroidNative, previewNativeSound, requestNativeNotificationPermissions } from '../lib/nativeNotifications'
 
 const SOUNDS: { kind: EventKind; label: string; hint: string }[] = [
   { kind: 'hourly', label: 'Hourly chime', hint: 'A soft bell at the start of each hour' },
@@ -24,6 +25,7 @@ export default function SettingsView() {
   const [error, setError] = useState('')
   const [clearing, setClearing] = useState(false)
   const [notifMsg, setNotifMsg] = useState('')
+  const nativeAndroid = isAndroidNative()
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(makeBackup(st.data, s), null, 2)], { type: 'application/json' })
@@ -37,6 +39,21 @@ export default function SettingsView() {
   }
   const enableSystem = async (on: boolean) => {
     if (!on) { store.updateSettings({ systemNotifications: false }); setNotifMsg(''); return }
+    if (nativeAndroid) {
+      try {
+        const status = await requestNativeNotificationPermissions()
+        if (status.display === 'granted') {
+          store.updateSettings({ systemNotifications: true })
+          setNotifMsg(status.exactAlarm === 'granted' ? '' : 'Exact alarms are off. Reminders are scheduled, but Android may deliver them late. Enable “Alarms & reminders” in app settings for better timing.')
+        } else {
+          setNotifMsg('Notification permission was not granted. Allow Daybloom notifications in Android settings.')
+        }
+      } catch (e) {
+        console.error('Could not request native notification permissions', e)
+        setNotifMsg('Could not enable notifications. Check notification and Alarms & reminders permissions in Android settings.')
+      }
+      return
+    }
     if (!('Notification' in window)) { setNotifMsg('This browser does not support system notifications.'); return }
     const p = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission()
     if (p === 'granted') { store.updateSettings({ systemNotifications: true }); setNotifMsg('') }
@@ -55,7 +72,15 @@ export default function SettingsView() {
               <div key={kind} className="space-y-1.5">
                 <div className="flex items-center gap-3">
                   <div className="min-w-0 flex-1"><div className="font-bold">{label}</div><div className="text-xs font-semibold text-ink-faint">{hint}</div></div>
-                  <button className="icon-btn border border-line" aria-label={`Preview ${label}`} onClick={async () => { const ok = await playSound(kind, p.volume); if (!ok) store.showToast('Your browser blocked audio. Tap again.') }}><Play size={16} /></button>
+                  <button className="icon-btn border border-line" aria-label={`Preview ${label}`} onClick={async () => {
+                    if (nativeAndroid) {
+                      try { await previewNativeSound(kind); store.showToast('Sound preview scheduled. Lock the screen to test it.') }
+                      catch (e) { console.error('Could not schedule native sound preview', e); store.showToast('Allow notifications before previewing native sounds.') }
+                    } else {
+                      const ok = await playSound(kind, p.volume)
+                      if (!ok) store.showToast('Your browser blocked audio. Tap again.')
+                    }
+                  }}><Play size={16} /></button>
                   <Toggle on={p.on} label={label} onChange={(on) => store.updateSettings({ [kind]: { ...p, on } })} />
                 </div>
                 <input type="range" min={0} max={1} step={0.05} value={p.volume} disabled={!p.on} aria-label={`${label} volume`} className="w-full accent-[#4AA8E8]"
@@ -64,11 +89,13 @@ export default function SettingsView() {
             )
           })}
           <div className="flex items-center gap-3 border-t border-line pt-3">
-            <div className="min-w-0 flex-1"><div className="font-bold">System notifications</div><div className="text-xs font-semibold text-ink-faint">Banners while the app is in the background</div></div>
-            <Toggle on={s.systemNotifications} label="System notifications" onChange={enableSystem} />
+            <div className="min-w-0 flex-1"><div className="font-bold">{nativeAndroid ? 'Scheduled notifications' : 'System notifications'}</div><div className="text-xs font-semibold text-ink-faint">{nativeAndroid ? 'Android alarms for hourly, start and end reminders' : 'Banners while the app is in the background'}</div></div>
+            <Toggle on={s.systemNotifications} label={nativeAndroid ? 'Scheduled notifications' : 'System notifications'} onChange={enableSystem} />
           </div>
           {notifMsg && <p role="status" className="text-sm font-semibold text-[#C23B35]">{notifMsg}</p>}
-          <p className="rounded-2xl bg-[#FFF7D1] p-3 text-xs font-semibold text-ink-soft">Sounds play while Daybloom is open (or recently open) on this device. A web app can’t promise alerts once it is fully closed or the phone is asleep — keep the app open for reliable chimes.</p>
+          <p className="rounded-2xl bg-[#FFF7D1] p-3 text-xs font-semibold text-ink-soft">{nativeAndroid
+            ? 'Android notifications are scheduled independently of the app screen. Up to 450 upcoming reminders are queued; opening Daybloom refreshes the 14-day schedule. Android may defer closely spaced alarms in Doze, and exact timing depends on Alarms & reminders permission and notification-channel settings. The slider controls in-app previews; native alert volume follows Android’s notification volume.'
+            : 'Sounds play while Daybloom is open (or recently open) on this device. A web app can’t promise alerts once it is fully closed or the phone is asleep — keep the app open for reliable chimes.'}</p>
         </Section>
 
         <Section title="Focus Blocks">

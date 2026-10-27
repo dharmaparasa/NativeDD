@@ -5,6 +5,7 @@ import { buildEvents, coalesce, selectDue } from './lib/notify'
 import { playSound, unlockAudio } from './lib/sound'
 import { todayStr } from './lib/time'
 import { canInstall, onInstallChange } from './pwa'
+import { isAndroidNative } from './lib/nativeNotifications'
 
 export function useNow(ms = 10_000) {
   const [now, setNow] = useState(() => new Date())
@@ -25,6 +26,7 @@ export const isTyping = () => {
 /** Hourly / start / end sounds while the app is open. Safe after sleep: only events from the last 90 s play. */
 export function useNotifier() {
   useEffect(() => {
+    if (isAndroidNative()) return
     const unlock = () => { void unlockAudio() }
     window.addEventListener('pointerdown', unlock, { passive: true })
     window.addEventListener('keydown', unlock)

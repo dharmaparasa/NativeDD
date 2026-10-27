@@ -13,6 +13,7 @@ import { soundRecipe } from '../src/lib/sound'
 import { parseBackup, makeBackup } from '../src/lib/backup'
 import { DEFAULT_SETTINGS } from '../src/lib/types'
 import { addDays, atMs } from '../src/lib/time'
+import { buildNativeSchedule } from '../src/lib/nativeNotifications'
 
 const act = (p: Partial<Activity> & { date: string }) => makeActivity({ title: 'A', startMin: 540, endMin: 600, color: 'sky', ...p })
 const run = (d: Data, ops: Parameters<typeof applyTxn>[1]) => applyTxn(d, ops, 'do').data
@@ -216,6 +217,30 @@ describe('notifications', () => {
   it('the three sounds are different', () => {
     const j = (k: Parameters<typeof soundRecipe>[0]) => JSON.stringify(soundRecipe(k))
     expect(new Set([j('hourly'), j('start'), j('end')]).size).toBe(3)
+  })
+  it('builds unique future alarms, respects sound toggles, and caps the queue', () => {
+    const now = new Date(2026, 9, 22, 8).getTime()
+    const activities = Array.from({ length: 5 }, (_, i) => {
+      const startMin = 540 + i * 30
+      return act({
+        date: '2026-10-22',
+        title: `Recurring ${i}`,
+        startMin,
+        endMin: startMin + 30,
+        recurrence: { freq: 'daily', weekdays: [] },
+      })
+    })
+    const data: Data = { ...emptyData(), activities: Object.fromEntries(activities.map((activity) => [activity.id, activity])) }
+    const settings = { ...DEFAULT_SETTINGS, systemNotifications: true }
+    const queue = buildNativeSchedule(data, settings, now)
+    expect(queue.notifications).toHaveLength(450)
+    expect(queue.truncated).toBeGreaterThan(0)
+    expect(new Set(queue.notifications.map(({ id }) => id)).size).toBe(queue.notifications.length)
+    expect(queue.notifications.every(({ schedule }) => schedule?.at && schedule.at.getTime() > now)).toBe(true)
+
+    const hourlyOff = { ...settings, hourly: { ...settings.hourly, on: false } }
+    const filtered = buildNativeSchedule(data, hourlyOff, now)
+    expect(filtered.notifications.every(({ channelId }) => channelId !== 'daybloom-hourly')).toBe(true)
   })
 })
 
