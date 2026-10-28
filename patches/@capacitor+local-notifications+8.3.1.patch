@@ -1,5 +1,5 @@
 diff --git a/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt b/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt
-index 72c31a7..8068dd5 100644
+index 72c31a7..d9cccb8 100644
 --- a/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt
 +++ b/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt
 @@ -13,6 +13,7 @@ import android.media.AudioAttributes
@@ -26,11 +26,11 @@ index 72c31a7..8068dd5 100644
              pendingIntent = PendingIntent.getBroadcast(context, requestId, notificationIntent, flags)
              setExactIfPossible(alarmManager, request, trigger, pendingIntent)
              val sdf = SimpleDateFormat("yyyy/MM/dd HH:mm:ss")
-@@ -355,7 +358,13 @@ class LocalNotificationManager(
+@@ -355,10 +358,30 @@ class LocalNotificationManager(
      ) {
          val schedule = localNotification.schedule ?: return
          val useExact = localNotification.isExactNotification && canScheduleExactAlarms(alarmManager)
-+        val requestId = localNotification.id
++        val requestId = localNotification.id ?: return
          if (localNotification.isExactNotification && !useExact) {
 +            if (localNotification.isExactMandatory) {
 +                Logger.warn("Capacitor/LocalNotification", "Exact alarms are required but not allowed; notification was not scheduled.")
@@ -39,14 +39,32 @@ index 72c31a7..8068dd5 100644
 +            }
              Logger.warn("Capacitor/LocalNotification", "Exact alarms not allowed in user settings.  Notification scheduled with non-exact alarm.")
          }
-         if (useExact) {
-@@ -371,6 +380,10 @@ class LocalNotificationManager(
+-        if (useExact) {
++        val useAlarmClock = useExact && localNotification.isExactMandatory
++        if (useAlarmClock) {
++            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
++            if (launchIntent == null) {
++                Logger.error("Capacitor/LocalNotification", "Cannot schedule alarm-clock notification without an app launch intent.", null)
++                return
++            }
++            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
++            var showIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
++                showIntentFlags = showIntentFlags or PendingIntent.FLAG_IMMUTABLE
++            }
++            val showIntent = PendingIntent.getActivity(context, 0, launchIntent, showIntentFlags)
++            alarmManager.setAlarmClock(AlarmManager.AlarmClockInfo(trigger, showIntent), pendingIntent)
++        } else if (useExact) {
+             if (schedule.allowWhileIdle()) {
+                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pendingIntent)
+             } else {
+@@ -371,6 +394,10 @@ class LocalNotificationManager(
                  alarmManager.set(AlarmManager.RTC, trigger, pendingIntent)
              }
          }
 +        Log.i(
 +            "DaybloomAlarm",
-+            "scheduled notificationId=$requestId expectedAtMs=$trigger exact=$useExact allowWhileIdle=${schedule.allowWhileIdle()}"
++            "scheduled notificationId=$requestId expectedAtMs=$trigger exact=$useExact alarmClock=$useAlarmClock allowWhileIdle=${schedule.allowWhileIdle()}"
 +        )
      }
  

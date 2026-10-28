@@ -110,7 +110,7 @@ export default function SettingsView() {
           )}
           {notifMsg && <p role="status" className="text-sm font-semibold text-[#C23B35]">{notifMsg}</p>}
           <p className="rounded-2xl bg-[#FFF7D1] p-3 text-xs font-semibold text-ink-soft">{nativeAndroid
-            ? 'Android reminders use exact wake-up alarms and require Alarms & reminders access. Up to 450 upcoming reminders are queued; opening Daybloom refreshes the 14-day schedule. Notification sounds follow Android channel settings and the phone’s notification volume. Use the 2-minute test to check delivery while locked. On some Realme phones, also enable Daybloom Auto launch and Background activity; unrestricted battery use alone may not be enough.'
+            ? 'Android reminders use alarm-clock priority exact wake-up alarms and require exact-alarm access where Android provides it. Android may show Daybloom as your next alarm. Up to 450 upcoming reminders are queued; opening Daybloom refreshes the 14-day schedule. Notification sounds follow Android channel settings and the phone’s notification volume. On some Realme phones, also enable Daybloom Auto launch and Background activity; unrestricted battery use alone may not be enough.'
             : 'Sounds play while Daybloom is open (or recently open) on this device. A web app can’t promise alerts once it is fully closed or the phone is asleep — keep the app open for reliable chimes.'}</p>
         </Section>
 
