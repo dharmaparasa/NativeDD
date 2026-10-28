@@ -1,0 +1,102 @@
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt b/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt
+index 72c31a7..8068dd5 100644
+--- a/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt
++++ b/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/LocalNotificationManager.kt
+@@ -13,6 +13,7 @@ import android.media.AudioAttributes
+ import android.net.Uri
+ import android.os.Build
+ import android.os.Bundle
++import android.util.Log
+ import androidx.core.app.NotificationCompat
+ import androidx.core.app.NotificationManagerCompat
+ import androidx.core.app.RemoteInput
+@@ -306,6 +307,7 @@ class LocalNotificationManager(
+         val notificationIntent = Intent(context, TimedNotificationPublisher::class.java)
+         notificationIntent.putExtra(NOTIFICATION_INTENT_KEY, requestId)
+         notificationIntent.putExtra(TimedNotificationPublisher.NOTIFICATION_KEY, notification)
++        schedule.at?.time?.let { notificationIntent.putExtra(TimedNotificationPublisher.EXPECTED_AT_KEY, it) }
+         var flags = PendingIntent.FLAG_CANCEL_CURRENT
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+             flags = flags or PendingIntent.FLAG_MUTABLE
+@@ -340,6 +342,7 @@ class LocalNotificationManager(
+         if (on != null) {
+             val trigger = on.nextTrigger(Date())
+             notificationIntent.putExtra(TimedNotificationPublisher.CRON_KEY, on.toMatchString())
++            notificationIntent.putExtra(TimedNotificationPublisher.EXPECTED_AT_KEY, trigger)
+             pendingIntent = PendingIntent.getBroadcast(context, requestId, notificationIntent, flags)
+             setExactIfPossible(alarmManager, request, trigger, pendingIntent)
+             val sdf = SimpleDateFormat("yyyy/MM/dd HH:mm:ss")
+@@ -355,7 +358,13 @@ class LocalNotificationManager(
+     ) {
+         val schedule = localNotification.schedule ?: return
+         val useExact = localNotification.isExactNotification && canScheduleExactAlarms(alarmManager)
++        val requestId = localNotification.id
+         if (localNotification.isExactNotification && !useExact) {
++            if (localNotification.isExactMandatory) {
++                Logger.warn("Capacitor/LocalNotification", "Exact alarms are required but not allowed; notification was not scheduled.")
++                Log.e("DaybloomAlarm", "Not scheduling notificationId=$requestId because exact-alarm access is required.")
++                return
++            }
+             Logger.warn("Capacitor/LocalNotification", "Exact alarms not allowed in user settings.  Notification scheduled with non-exact alarm.")
+         }
+         if (useExact) {
+@@ -371,6 +380,10 @@ class LocalNotificationManager(
+                 alarmManager.set(AlarmManager.RTC, trigger, pendingIntent)
+             }
+         }
++        Log.i(
++            "DaybloomAlarm",
++            "scheduled notificationId=$requestId expectedAtMs=$trigger exact=$useExact allowWhileIdle=${schedule.allowWhileIdle()}"
++        )
+     }
+ 
+     /** Whether the app can currently schedule exact alarms. Always true below Android 12. */
+diff --git a/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/TimedNotificationPublisher.kt b/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/TimedNotificationPublisher.kt
+index 52def58..5ea260b 100644
+--- a/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/TimedNotificationPublisher.kt
++++ b/node_modules/@capacitor/local-notifications/android/src/main/kotlin/com/capacitorjs/plugins/localnotifications/TimedNotificationPublisher.kt
+@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver
+ import android.content.Context
+ import android.content.Intent
+ import android.os.Build
++import android.util.Log
+ import com.getcapacitor.Logger
+ import java.text.SimpleDateFormat
+ import java.util.Date
+@@ -29,16 +30,27 @@ class TimedNotificationPublisher : BroadcastReceiver() {
+         }
+         if (notification == null) return
+ 
+-        notification.`when` = System.currentTimeMillis()
+-
+         val id = intent.getIntExtra(LocalNotificationManager.NOTIFICATION_INTENT_KEY, Int.MIN_VALUE)
+         if (id == Int.MIN_VALUE) {
+             Logger.error(Logger.tags("LN"), "No valid id supplied", null)
+         }
++        val expectedAt = intent.getLongExtra(EXPECTED_AT_KEY, -1L)
++        val firedAt = System.currentTimeMillis()
++        val channel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            notificationManager.getNotificationChannel(notification.channelId)
++        } else {
++            null
++        }
++        Log.i(
++            "DaybloomAlarm",
++            "fired notificationId=$id expectedAtMs=$expectedAt firedAtMs=$firedAt delayMs=${if (expectedAt >= 0) firedAt - expectedAt else -1} channelId=${notification.channelId} channelSound=${channel?.sound ?: notification.sound} importance=${channel?.importance ?: -1}"
++        )
++        notification.`when` = firedAt
+         val storage = NotificationStorage(context)
+         val notificationJson = storage.getSavedNotificationAsJSObject(id.toString())
+         LocalNotificationsPlugin.fireReceived(notificationJson)
+         notificationManager.notify(id, notification)
++        Log.i("DaybloomAlarm", "posted notificationId=$id postedAtMs=${System.currentTimeMillis()} channelId=${notification.channelId}")
+         rescheduleNotificationIfNeeded(context, intent, id)
+         // The notification's record stays in storage after firing (matching the
+         // legacy plugin) so a triggered notification's full data — sound, extra,
+@@ -79,5 +91,6 @@ class TimedNotificationPublisher : BroadcastReceiver() {
+     companion object {
+         const val NOTIFICATION_KEY = "NotificationPublisher.notification"
+         const val CRON_KEY = "NotificationPublisher.cron"
++        const val EXPECTED_AT_KEY = "DaybloomNotification.expectedAt"
+     }
+ }

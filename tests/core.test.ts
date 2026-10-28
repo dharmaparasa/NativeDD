@@ -237,10 +237,16 @@ describe('notifications', () => {
     expect(queue.truncated).toBeGreaterThan(0)
     expect(new Set(queue.notifications.map(({ id }) => id)).size).toBe(queue.notifications.length)
     expect(queue.notifications.every(({ schedule }) => schedule?.at && schedule.at.getTime() > now)).toBe(true)
+    expect(queue.notifications.every(({ schedule }) => schedule?.allowWhileIdle)).toBe(true)
+    expect(queue.notifications.every(({ channelId, sound }) =>
+      channelId === 'daybloom-v2-hourly' ? sound === 'hourly.wav'
+        : channelId === 'daybloom-v2-start' ? sound === 'start.wav'
+          : channelId === 'daybloom-v2-end' && sound === 'end.wav',
+    )).toBe(true)
 
     const hourlyOff = { ...settings, hourly: { ...settings.hourly, on: false } }
     const filtered = buildNativeSchedule(data, hourlyOff, now)
-    expect(filtered.notifications.every(({ channelId }) => channelId !== 'daybloom-hourly')).toBe(true)
+    expect(filtered.notifications.every(({ channelId }) => channelId !== 'daybloom-v2-hourly')).toBe(true)
   })
 })
 

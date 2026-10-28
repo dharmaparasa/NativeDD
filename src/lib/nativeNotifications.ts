@@ -15,12 +15,21 @@ const SOUND_FILES: Record<EventKind, string> = {
   end: 'end.wav',
 }
 const CHANNELS: Record<EventKind, string> = {
-  hourly: 'daybloom-hourly',
-  start: 'daybloom-start',
-  end: 'daybloom-end',
+  hourly: 'daybloom-v2-hourly',
+  start: 'daybloom-v2-start',
+  end: 'daybloom-v2-end',
+}
+const TEST_NOTIFICATION_IDS: Record<EventKind, number> = {
+  hourly: 2_147_483_600,
+  start: 2_147_483_601,
+  end: 2_147_483_602,
 }
 
 export const isAndroidNative = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
+
+function exactAlarmAccessRequired() {
+  return new Error('Enable “Alarms & reminders” for Daybloom to schedule exact reminders.')
+}
 
 export async function requestNativeNotificationPermissions() {
   const permission = await LocalNotifications.checkPermissions()
@@ -77,18 +86,41 @@ export function buildNativeSchedule(data: Data, settings: Settings, now = Date.n
   return { notifications, truncated: future.length - selected.length }
 }
 
-async function ensureChannels() {
-  await Promise.all((Object.keys(CHANNELS) as EventKind[]).map((kind) =>
-    LocalNotifications.createChannel({
-      id: CHANNELS[kind],
-      name: `${kind === 'hourly' ? 'Hourly' : kind === 'start' ? 'Activity start' : 'Activity end'} reminders`,
-      description: 'Daybloom timetable reminders',
-      sound: SOUND_FILES[kind],
-      importance: 4,
-      visibility: 1,
-      vibration: false,
-    }),
-  ))
+let channelsReady: Promise<void> | undefined
+function ensureChannels() {
+  channelsReady ??= (async () => {
+    await Promise.all((Object.keys(CHANNELS) as EventKind[]).map((kind) =>
+      LocalNotifications.createChannel({
+        id: CHANNELS[kind],
+        name: `${kind === 'hourly' ? 'Hourly' : kind === 'start' ? 'Activity start' : 'Activity end'} reminders`,
+        description: 'Daybloom timetable reminders',
+        sound: SOUND_FILES[kind],
+        importance: 4,
+        visibility: 1,
+        vibration: false,
+      }),
+    ))
+    const { channels } = await LocalNotifications.listChannels()
+    for (const kind of Object.keys(CHANNELS) as EventKind[]) {
+      const channel = channels.find(({ id }) => id === CHANNELS[kind])
+      const expectedSound = `/raw/${SOUND_FILES[kind].replace(/\.wav$/, '')}`
+      if (!channel || !channel.sound?.endsWith(expectedSound) || (channel.importance ?? 0) < 3) {
+        console.error('[Daybloom notifications] Channel configuration mismatch', {
+          id: CHANNELS[kind],
+          expectedSound,
+          actualSound: channel?.sound,
+          importance: channel?.importance,
+        })
+      } else {
+        console.info('[Daybloom notifications] Channel ready', {
+          id: channel.id,
+          sound: channel.sound,
+          importance: channel.importance,
+        })
+      }
+    }
+  })()
+  return channelsReady
 }
 
 async function sync(data: Data, settings: Settings) {
@@ -105,11 +137,26 @@ async function sync(data: Data, settings: Settings) {
   if (permission.display !== 'granted') return { scheduled: 0, truncated: 0 }
 
   const exact = await LocalNotifications.checkExactNotificationSetting()
+  if (exact.exact_alarm !== 'granted') {
+    const pending = await LocalNotifications.getPending()
+    const owned = pending.notifications.filter((notification) => notification.extra?.source === SOURCE)
+    if (owned.length) await LocalNotifications.cancel({ notifications: owned.map(({ id }) => ({ id })) })
+    console.error('[Daybloom notifications] Exact-alarm access is unavailable; reminders were not scheduled.')
+    return { scheduled: 0, truncated: 0 }
+  }
+
   const { notifications, truncated } = buildNativeSchedule(data, settings)
   const exactNotifications = notifications.map((notification) => ({
     ...notification,
-    isExactNotification: exact.exact_alarm === 'granted',
+    isExactNotification: true,
+    isExactMandatory: true,
   }))
+  console.info('[Daybloom notifications] Scheduling reminders', {
+    count: exactNotifications.length,
+    exactAlarm: exact.exact_alarm,
+    firstAt: exactNotifications[0]?.schedule?.at?.toISOString(),
+    lastAt: exactNotifications[exactNotifications.length - 1]?.schedule?.at?.toISOString(),
+  })
   const pending = await LocalNotifications.getPending()
   const owned = pending.notifications.filter((notification) => notification.extra?.source === SOURCE)
   const wantedIds = new Set(exactNotifications.map(({ id }) => id))
@@ -157,11 +204,52 @@ export async function previewNativeSound(kind: EventKind) {
   })
 }
 
+export async function scheduleNativeTestAlarm(kind: EventKind = 'start') {
+  if (!isAndroidNative()) throw new Error('Test alarms are only available in the Android app.')
+  await ensureChannels()
+  const permission = await LocalNotifications.checkPermissions()
+  if (permission.display !== 'granted') throw new Error('Allow notification permission before scheduling a test alarm.')
+  const exact = await LocalNotifications.checkExactNotificationSetting()
+  if (exact.exact_alarm !== 'granted') throw exactAlarmAccessRequired()
+
+  const at = new Date(Date.now() + 2 * 60_000)
+  const id = TEST_NOTIFICATION_IDS[kind]
+  await LocalNotifications.schedule({
+    notifications: [{
+      id,
+      title: 'Daybloom test alarm',
+      body: `${kind === 'hourly' ? 'Hourly' : kind === 'start' ? 'Activity start' : 'Activity end'} sound · scheduled for ${at.toLocaleTimeString()}`,
+      channelId: CHANNELS[kind],
+      sound: SOUND_FILES[kind],
+      schedule: { at, allowWhileIdle: true },
+      isExactNotification: true,
+      isExactMandatory: true,
+      extra: { source: 'daybloom-test', kind },
+      autoCancel: true,
+    }],
+  })
+  console.info('[Daybloom notifications] Test alarm scheduled', {
+    id,
+    channelId: CHANNELS[kind],
+    sound: SOUND_FILES[kind],
+    expectedAt: at.toISOString(),
+  })
+  return at
+}
+
 export async function refreshNativeNotificationsOnResume(
   getState: () => { data: Data; settings: Settings },
 ) {
   if (!isAndroidNative()) return () => undefined
   let active = true
+  const notificationListener = await LocalNotifications.addListener('localNotificationReceived', (notification) => {
+    if (notification.extra?.source !== SOURCE && notification.extra?.source !== 'daybloom-test') return
+    console.info('[Daybloom notifications] Native receiver reported notification', {
+      id: notification.id,
+      expectedAt: notification.schedule?.at,
+      receivedAt: new Date().toISOString(),
+    })
+  })
   const listener = await App.addListener('appStateChange', ({ isActive }) => {
     if (active && isActive) {
       const { data, settings } = getState()
@@ -170,5 +258,9 @@ export async function refreshNativeNotificationsOnResume(
       })
     }
   })
-  return () => { active = false; void listener.remove() }
+  return () => {
+    active = false
+    void listener.remove()
+    void notificationListener.remove()
+  }
 }

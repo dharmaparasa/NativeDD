@@ -32,6 +32,15 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: bash ./gradlew assembleDebug
+      - name: Verify bundled notification sounds
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          for sound in hourly.wav start.wav end.wav; do
+            unzip -l "$apk" "res/raw/$sound" | grep -q "res/raw/$sound" || {
+              echo "Missing notification sound in APK: $sound"
+              exit 1
+            }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: daybloom-debug-apk

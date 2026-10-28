@@ -7,7 +7,7 @@ import type { EventKind } from '../lib/notify'
 import { makeBackup, parseBackup, type Backup } from '../lib/backup'
 import { useCanInstall } from '../hooks'
 import { promptInstall } from '../pwa'
-import { isAndroidNative, previewNativeSound, requestNativeNotificationPermissions } from '../lib/nativeNotifications'
+import { isAndroidNative, previewNativeSound, requestNativeNotificationPermissions, scheduleNativeTestAlarm } from '../lib/nativeNotifications'
 
 const SOUNDS: { kind: EventKind; label: string; hint: string }[] = [
   { kind: 'hourly', label: 'Hourly chime', hint: 'A soft bell at the start of each hour' },
@@ -42,9 +42,11 @@ export default function SettingsView() {
     if (nativeAndroid) {
       try {
         const status = await requestNativeNotificationPermissions()
-        if (status.display === 'granted') {
+        if (status.display === 'granted' && status.exactAlarm === 'granted') {
           store.updateSettings({ systemNotifications: true })
-          setNotifMsg(status.exactAlarm === 'granted' ? '' : 'Exact alarms are off. Reminders are scheduled, but Android may deliver them late. Enable “Alarms & reminders” in app settings for better timing.')
+          setNotifMsg('')
+        } else if (status.display === 'granted') {
+          setNotifMsg('Exact reminders are not enabled. Allow “Alarms & reminders” for Daybloom in Android settings, then turn notifications on again.')
         } else {
           setNotifMsg('Notification permission was not granted. Allow Daybloom notifications in Android settings.')
         }
@@ -92,9 +94,23 @@ export default function SettingsView() {
             <div className="min-w-0 flex-1"><div className="font-bold">{nativeAndroid ? 'Scheduled notifications' : 'System notifications'}</div><div className="text-xs font-semibold text-ink-faint">{nativeAndroid ? 'Android alarms for hourly, start and end reminders' : 'Banners while the app is in the background'}</div></div>
             <Toggle on={s.systemNotifications} label={nativeAndroid ? 'Scheduled notifications' : 'System notifications'} onChange={enableSystem} />
           </div>
+          {nativeAndroid && (
+            <button className="w-full rounded-2xl border border-line px-4 py-3 text-left text-sm font-bold"
+              onClick={async () => {
+                try {
+                  const at = await scheduleNativeTestAlarm()
+                  store.showToast(`Test alarm scheduled for ${at.toLocaleTimeString()}. Lock the screen to test it.`)
+                } catch (e) {
+                  console.error('Could not schedule native test alarm', e)
+                  store.showToast(e instanceof Error ? e.message : 'Could not schedule the test alarm.')
+                }
+              }}>
+              Schedule a 2-minute notification test
+            </button>
+          )}
           {notifMsg && <p role="status" className="text-sm font-semibold text-[#C23B35]">{notifMsg}</p>}
           <p className="rounded-2xl bg-[#FFF7D1] p-3 text-xs font-semibold text-ink-soft">{nativeAndroid
-            ? 'Android notifications are scheduled independently of the app screen. Up to 450 upcoming reminders are queued; opening Daybloom refreshes the 14-day schedule. Android may defer closely spaced alarms in Doze, and exact timing depends on Alarms & reminders permission and notification-channel settings. The slider controls in-app previews; native alert volume follows Android’s notification volume.'
+            ? 'Android reminders use exact wake-up alarms and require Alarms & reminders access. Up to 450 upcoming reminders are queued; opening Daybloom refreshes the 14-day schedule. Notification sounds follow Android channel settings and the phone’s notification volume. Use the 2-minute test to check delivery while locked.'
             : 'Sounds play while Daybloom is open (or recently open) on this device. A web app can’t promise alerts once it is fully closed or the phone is asleep — keep the app open for reliable chimes.'}</p>
         </Section>
 
